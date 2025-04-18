@@ -3,6 +3,8 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
 	"github.com/justinas/alice"
@@ -15,7 +17,8 @@ import (
 )
 
 type App struct {
-	DB *sql.DB
+	DB     *sql.DB
+	JWTKey []byte
 }
 
 type Credentials struct {
@@ -23,9 +26,16 @@ type Credentials struct {
 	Password string `json:"password, omitempty"`
 }
 
+type Claims struct {
+	Username string `json:"username"`
+	XataID   string `json:"xata_id"`
+	jwt.RegisteredClaims
+}
+
 type UserResponse struct {
 	XataID   string `json:"xata_id"`
 	Username string `json:"username"`
+	Token    string `json:"token"`
 }
 type ErrorResponse struct {
 	Message string `json:"message"`
@@ -108,8 +118,24 @@ func (app *App) register(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(UserResponse{XataID: xataId, Username: cred.Username})
 }
 
-func generateToken(username string, xataID string) (string, error) {
+func (app *App) generateToken(username string, xataID string) (string, error) {
 	expirationTime := time.Now().Add(5 * time.Minute)
+
+	claims := &Claims{Username: username, XataID: xataID, RegisteredClaims: jwt.RegisteredClaims{
+		ExpiresAt: jwt.NewNumericDate(expirationTime),
+	}}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+
+	tokenString, err := token.SignedString("")
+
+	fmt.Printf("%v", app)
+
+	if err != nil {
+		return "", err
+	}
+
+	return tokenString, nil
 }
 
 // lgoin
@@ -141,9 +167,19 @@ func (app *App) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenString, err := generateToken(creds.Username, xataID)
+	tokenString, err := app.generateToken(creds.Username, xataID)
+
+	if err != nil {
+		responseWithError(w, http.StatusInternalServerError, "Error generating token")
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(RouterResponse{Message: "Hello World"})
+	json.NewEncoder(w).Encode(UserResponse{
+		XataID:   xataID,
+		Username: creds.Username,
+		Token:    tokenString,
+	})
 }
 
 // create Project
